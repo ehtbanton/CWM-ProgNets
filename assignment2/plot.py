@@ -3,12 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # parameters to modify
-filename="test.data"
-label='label'
-xlabel = 'xlabel'
-ylabel = 'ylabel'
-title='Simple plot'
-fig_name='test.png'
+filename="iperfc.txt"
+label='iperf'
+xlabel = 'Time (s)'
+ylabel = 'Bandwidth (MB/s)'
+title='Latency performance over time'
+fig_name='iperf32.png'
 bins=100 #adjust the number of bins to your plot
 
 
