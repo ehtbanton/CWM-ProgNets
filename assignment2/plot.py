@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 filename="iperfc.txt"
 label='iperf'
 xlabel = 'Time (s)'
-ylabel = 'Bandwidth (MB/s)'
-title='Latency performance over time'
-fig_name='iperf32.png'
+ylabel = 'Packages lost (%)'
+title=''
+fig_name='iperfUDPlosses.png'
 bins=100 #adjust the number of bins to your plot
 
 
