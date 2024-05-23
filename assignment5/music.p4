@@ -1,53 +1,56 @@
 /*
  * 
  *
+ 
+ 
+ 
+This program sends back to the lab computer a set of frequencies associated with a chord definition, for playback on the lab computer.
+ 
+ 
  * This program implements a simple protocol. It can be carried over Ethernet
  * (Ethertype 0x1234).
- *
  
- My custom Chord Protocol header (32 bits per line):
+ My custom Chord Protocol header p4chord (32 bits per line):
   
  *         0                1                2                3
  * +----------------+----------------+----------------+----------------+
- * |       C        |       4        |              Tonic              |
+ * |       P        |      four      |              tonic              |
  * +----------------+----------------+----------------+----------------+
- * |                             ChordType                             |
+ * |            ChordType            |     bfreq1     |     bfreq2     |
  * +----------------+----------------+----------------+----------------+
- * |                                 |     bfreq1     |     bfreq2     |
+ * |     bfreq3     |                    ChosenNotes                   |
  * +----------------+----------------+----------------+----------------+
- * |       tfreq1       |        tfreq2      |        tfreq3      |
+ * |       tfreq1       |       tfreq2       |        tfreq3      |....|
  * +----------------+----------------+----------------+----------------+
 
  
- I will only work in the range A2 (110Hz) to A5 (880Hz).
- bfreq1 and bfreq2 are bass frequencies in Hz with 8 bits assigned.
- tfreq1, tfreq2, tfreq3 are treble frequencies - these are 10 bits long and will be assigned to
- frequencies 256Hz or greater.
+
  
- C is an ASCII Letter 'M' (0x43)
+ P is an ASCII Letter 'P' (0x50)
  4 is an ASCII Letter '4' (0x34)
- Tonic is two ASCII Letters:
+ tonic is two ASCII Letters:
  	1) A, B, C, D, E, F or G (keyboard notes)
  		(ASCII 0x41-0x47)
- 	2) s,f,n (whether the note is sharp, flat, or natural)
- 		(ASCII 0x73 0x66 0x6e respectively)
- * ChordType is four ASCII letters, one of the following:
- 	maj_
- 	maj7
- 	min_
- 	min7
- 	dim7
- 	dom7
- 	aug5
- 
- 
- *   '+' (0x2b) Result = OperandA + OperandB
- *   '-' (0x2d) Result = OperandA - OperandB
- *   '&' (0x26) Result = OperandA & OperandB
- *   '|' (0x7c) Result = OperandA | OperandB
- *   '^' (0x5e) Result = OperandA ^ OperandB
- 
- 
+ 	2) f,n,s (whether the note is flat, natural, or sharp)
+ 		(ASCII 0x66 0x6e 0x73 respectively)
+ 	e.g. represent As with 0x4173
+ 		
+ChordType is two ASCII letters, one of the following:
+ 	M_ (4D 5F) for a major chord
+ 	M7 (4D 37) for a major 7th chord
+ 	m_ (6D 5F) for a minor chord
+ 	m7 (6D 37) for a minor 7th chord
+ 	di (64 69) for a diminished 7th chord
+ 	do (64 6F) for a dominant 7th chord
+ 	a6 (61 36) for an augmented 6th chord
+
+By default, up to 16 frequencies will be defined in the raspberry pi that correspond with this chord, and each frequency is assigned a 4-bit index 1-16. Then, ChosenNotes contains 6 indexes which choose the notes to put into bfreq1/2/3 and tfreq1/2/3. This way, we can maintain complete control over the chord we produce when defining it at the client - it is in effect a more advanced way of controlling chord inversions.
+
+The frequencies are outputs.
+I will work mainly in the range A2 (110Hz) to A5 (880Hz).
+bfreq1, bfreq2, and bfreq3 are bass frequencies in Hz with 8 bits assigned (up to 255Hz)
+tfreq1, tfreq2, tfreq3 are treble frequencies - these are 10 bits long and will be assigned to
+frequencies 256Hz or greater.
  
  *
  * The device receives a packet, performs the requested operation, fills in the
@@ -63,6 +66,9 @@
 
 typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
+typedef bit<8>  bfreq_t
+typedef bit<10> tfreq_t
+
 
 /*
  * Define the headers the program will recognize
@@ -77,33 +83,64 @@ header ethernet_t {
     bit<16> etherType;
 }
 
-/*
- * This is a custom protocol header for the calculator. We'll use
- * etherType 0x1234 for it (see parser)
- */
-const bit<16> P4CALC_ETYPE = 0x1234;
-const bit<8>  P4CALC_P     = 0x50;   // 'P'
-const bit<8>  P4CALC_4     = 0x34;   // '4'
-const bit<8>  P4CALC_VER   = 0x01;   // v0.1
-const bit<8>  P4CALC_PLUS  = 0x2b;   // '+'
-const bit<8>  P4CALC_MINUS = 0x2d;   // '-'
-const bit<8>  P4CALC_AND   = 0x26;   // '&'
-const bit<8>  P4CALC_OR    = 0x7c;   // '|'
-const bit<8>  P4CALC_CARET = 0x5e;   // '^'
 
-header p4calc_t {
-    bit<8> P;
-    bit<8> four;
-    bit<8> ver;
-    bit<8> op;
-    bit<32> operand_a;
-    bit<32> operand_b;
-    bit<32> res;
-    
-/* TODO
- * fill p4calc_t header with P, four, ver, op, operand_a, operand_b, and res
-   entries based on above protocol header definition.
- */
+// Using etherType 0x1234: 
+const bit<16> ETYPE = 0x1234;
+
+// Letters to identify this header type
+const bit<8>  P = 0x43;      // 'P'
+const bit<8>  four = 0x34;   // '4'
+
+// Possible tonic notes (21 defined - although there will be some overlap! see later)
+const bit<16> Af = 0x4166;
+const bit<16> An = 0x416e;
+const bit<16> As = 0x4173;
+const bit<16> Bf = 0x4266;
+const bit<16> Bn = 0x426e;
+const bit<16> Bs = 0x4273;
+const bit<16> Cf = 0x4366;
+const bit<16> Cn = 0x436e;
+const bit<16> Cs = 0x4373;
+const bit<16> Df = 0x4466;
+const bit<16> Dn = 0x446e;
+const bit<16> Ds = 0x4473;
+const bit<16> Ef = 0x4566;
+const bit<16> En = 0x456e;
+const bit<16> Es = 0x4573;
+const bit<16> Ff = 0x4666;
+const bit<16> Fn = 0x466e;
+const bit<16> Fs = 0x4673;
+const bit<16> Gf = 0x4766;
+const bit<16> Gn = 0x476e;
+const bit<16> Gs = 0x4773;
+
+// Possible note frequencies (over the range of 3 octaves
+const bit<10> 
+
+
+// Possible chord types (7 defined but we can add more if we like)
+const bit<32> major = 0x4D5F
+const bit<32> major7 = 0x4D37
+const bit<32> minor = 0x6D5F
+const bit<32> minor7 = 0x6D37
+const bit<32> diminished7 = 0x6469
+const bit<32> dominant7 = 0x646F
+const bit<32> augmented6 = 0x6136
+
+
+header p4chord_t {
+    bit<8>  P;
+    bit<8>  four;
+    bit<16> tonic;
+    bit<16> ChordType;
+    bit<8>  bfreq1;
+    bit<8>  bfreq2;
+    bit<8>  bfreq3;
+    bit<24> ChosenNotes
+    bit<10> tfreq1;
+    bit<10> tfreq2;
+    bit<10> tfreq3;
+    bit<2>  favnum
 }
 
 /*
@@ -113,7 +150,7 @@ header p4calc_t {
  */
 struct headers {
     ethernet_t   ethernet;
-    p4calc_t     p4calc;
+    p4chord_t     p4chord;
 }
 
 /*
@@ -137,24 +174,22 @@ parser MyParser(packet_in packet,
     state start {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
-            P4CALC_ETYPE : check_p4calc;
-            default      : accept;
+            ETYPE : check_p4chord;
+            default       : accept;
         }
     }
 
-    state check_p4calc {
-        /* TODO: just uncomment the following parse block */
+    state check_p4chord {
         transition select(
-        packet.lookahead<p4calc_t>().P,
-        packet.lookahead<p4calc_t>().four,
-        packet.lookahead<p4calc_t>().ver) {
-            (P4CALC_P, P4CALC_4, P4CALC_VER) : parse_p4calc;
+        packet.lookahead<p4chord_t>().P,
+        packet.lookahead<p4chord_t>().four) {
+            (P, four) : parse_p4chord;
             default                          : accept;
         }
     }
 
-    state parse_p4calc {
-        packet.extract(hdr.p4calc);
+    state parse_p4chord {
+        packet.extract(hdr.p4chord);
         transition accept;
     }
 }
@@ -173,52 +208,70 @@ control MyVerifyChecksum(inout headers hdr,
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
-    action send_back(bit<32> result) {
+                  
+    action send_back(bit<8> bfreq1, bit<8> bfreq2, bit<8> bfreq3, bit<10> tfreq1, bit<10> tfreq2, bit<10> tfreq3) {
         /* TODO
-         * - put the result back in hdr.p4calc.res
+         * - put the frequencies into hdr.p4chord.bfreq1,bfreq2,bfreq3,tfreq1,tfreq2,tfreq3
          * - swap MAC addresses in hdr.ethernet.dstAddr and
          *   hdr.ethernet.srcAddr using a temp variable
          * - Send the packet back to the port it came from
              by saving standard_metadata.ingress_port into
              standard_metadata.egress_spec
          */
-         hdr.p4calc.res = result;
+         
+         hdr.p4chord.bfreq1 = bfreq1;
+         hdr.p4chord.bfreq2 = bfreq2;
+         hdr.p4chord.bfreq3 = bfreq3;
+         hdr.p4chord.tfreq1 = tfreq1;
+         hdr.p4chord.tfreq2 = tfreq2;
+         hdr.p4chord.tfreq3 = tfreq3;
+          
          macAddr_t temp;
          temp = hdr.ethernet.dstAddr;
          hdr.ethernet.dstAddr = hdr.ethernet.srcAddr;
          hdr.ethernet.srcAddr = temp;
-         
          standard_metadata.egress_spec = standard_metadata.ingress_port;
     }
 
-    action operation_add() {
-        /* TODO call send_back with operand_a + operand_b */
-        send_back(hdr.p4calc.operand_a + hdr.p4calc.operand_b);
+    action major() {
+    	if(hdr.p4chord.tonic == Ab || hdr.p4chord.tonic == Gs){
+    		f_root = 52 // frequency of lowest instance of this tonic
+        	send_back(bfreq1,bfreq2,bfreq3,tfreq1,tfreq2,tfreq3);
+        }
     }
 
-    action operation_sub() {
-        /* TODO call send_back with operand_a - operand_b */
-        send_back(hdr.p4calc.operand_a - hdr.p4calc.operand_b);
+    action major7() {
+
     }
 
-    action operation_and() {
-        /* TODO call send_back with operand_a & operand_b */
-        send_back(hdr.p4calc.operand_a & hdr.p4calc.operand_b);
+    action minor() {
+
     }
 
-    action operation_or() {
-        /* TODO call send_back with operand_a | operand_b */
-        send_back(hdr.p4calc.operand_a | hdr.p4calc.operand_b);
+    action minor7() {
+
     }
 
-    action operation_xor() {
-        /* TODO call send_back with operand_a ^ operand_b */
-        send_back(hdr.p4calc.operand_a ^ hdr.p4calc.operand_b);
-    }
 
-    action operation_drop() {
-        mark_to_drop(standard_metadata);
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     table calculate {
         key = {
